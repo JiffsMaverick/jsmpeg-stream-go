@@ -13,7 +13,10 @@ import (
 	"strconv"
 )
 
+var newClientIndex = 0
+
 type Client struct {
+	id       int
 	ws       *websocket.Conn
 	sendChan chan *[]byte
 
@@ -22,10 +25,12 @@ type Client struct {
 
 func NewClient(ws *websocket.Conn, unregisterChan chan *Client) *Client {
 	client := &Client{
+		id:             newClientIndex,
 		ws:             ws,
 		sendChan:       make(chan *[]byte, 512),
 		unregisterChan: unregisterChan,
 	}
+	newClientIndex = newClientIndex + 1
 
 	return client
 }
@@ -96,13 +101,6 @@ func NewWebSocketHandler(params *Params) *WebSocketHandler {
 		portNum:         params.websocketPort,
 		readBufferSize:  params.readBufferSize,
 		writeBufferSize: params.writeBufferSize,
-		// upgrader: &websocket.Upgrader{
-		// 	ReadBufferSize: params.readBufferSize,
-		// 	WriteBufferSize: params.writeBufferSize,
-		// 	CheckOrigin: func(r *http.Request) bool {
-		// 		return true
-		// 	},
-		// },
 	}
 
 	return clientManager
@@ -112,6 +110,10 @@ func (h *WebSocketHandler) BroadcastData(data *[]byte) {
 	for client := range h.clients {
 		select {
 		case client.sendChan <- data:
+			// log.Printf("writing to client %d success", client.id)
+			break
+		default:
+			// log.Printf("writing to client %d failed, buffer full", client.id)
 			break
 		}
 	}
@@ -162,19 +164,18 @@ func (h *WebSocketHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//subprotocols := r.Header["Sec-WebSocket-Protocol"]
-	//if len(subprotocols) == 0 {
-	//	subprotocols = []string{"null"}
-	//}
+	subprotocols := r.Header["Sec-WebSocket-Protocol"]
+	if len(subprotocols) == 0 {
+		subprotocols = []string{"null"}
+	}
 
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  h.readBufferSize,
 		WriteBufferSize: h.writeBufferSize,
 		CheckOrigin: func(r *http.Request) bool {
-			return true 
+			return true
 		},
-		//Subprotocols: subprotocols,
-		Subprotocols: []string{"null"},
+		Subprotocols: subprotocols,
 	}
 
 	ws, err := upgrader.Upgrade(w, r, nil)
@@ -214,7 +215,7 @@ func (s *IncomingStreamHandler) HandlePost(w http.ResponseWriter, r *http.Reques
 	log.Printf("IncomingStream connected: %s\n", r.RemoteAddr)
 
 	for {
-		data, err := ioutil.ReadAll(io.LimitReader(r.Body, 1024))
+		data, err := ioutil.ReadAll(io.LimitReader(r.Body, 8192))
 		if err != nil || len(data) == 0 {
 			break
 		}
